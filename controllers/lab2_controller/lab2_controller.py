@@ -93,6 +93,23 @@ def calculate_vel(sensor):
         
     return (1 - (clamped_reading - GROUND_SENSOR_THRESHOLD) / SENSOR_RANGE) * MAX_SPEED
 
+def get_delta_theta(current_phi_L, current_phi_R):
+    return (current_phi_R * WHEEL_RADIUS / EPUCK_AXLE_DIAMETER) - (current_phi_L * WHEEL_RADIUS / EPUCK_AXLE_DIAMETER)
+    
+def get_delta_phi(current_phi):
+    return current_phi / SIM_TIMESTEP
+    
+def get_delta_x_R(current_phi_L, current_phi_R):
+    return (WHEEL_RADIUS * current_phi_L / 2) + (WHEEL_RADIUS * current_phi_R / 2)
+    
+def get_delta_y_R():
+    return 0
+    
+def get_delta_x_I(current_delta_x_R, current_delta_y_R, theta):
+    return (math.cos(theta) * current_delta_x_R) - (math.sin(theta) * current_delta_y_R)
+    
+def get_delta_y_I(current_delta_x_R, current_delta_y_R, theta):
+    return (math.sin(theta) * current_delta_x_R) + (math.cos(theta) * current_delta_y_R)
 
 # Main Control Loop:
 while robot.step(SIM_TIMESTEP) != -1:
@@ -187,7 +204,7 @@ while robot.step(SIM_TIMESTEP) != -1:
                 if checking_start_line: # If the line detetion timer is on, let's check if it has been on for full duration needed
                     if robot.getTime() - START_LINE_DETECTION_DURATION > start_line_detection_time:
                         print("Start line detected!")
-                        pose_x, pose_y, pose_theta = 0, 0, 0
+                        # pose_x, pose_y, pose_theta = 0, 0, 0
                         checking_start_line = False
             else:
                 checking_start_line = False # If all three sensors aren't on, turn off line detection timer
@@ -224,9 +241,24 @@ while robot.step(SIM_TIMESTEP) != -1:
                 vL = MAX_SPEED * 0.7
                
 
-    # print("Current pose: [%5f, %5f, %5f]" % (pose_x, pose_y, pose_theta))
+    
     leftMotor.setVelocity((last_vL * 0.6) + (vL * 0.4))
     rightMotor.setVelocity((last_vR * 0.6) + (vR * 0.4))
     last_vL = vL if vL != last_vL else last_vL
     last_vR = vR if vR != last_vR else last_vR
     # print(vL, vR)
+    
+    phi_L = get_delta_phi(vL)
+    phi_R = get_delta_phi(vR)
+    
+    pose_theta += get_delta_theta(phi_L, phi_R)
+    
+    delta_x_R = get_delta_x_R(phi_L, phi_R)
+    delta_y_R = get_delta_y_R()
+    
+    pose_x += get_delta_x_I(delta_x_R, delta_y_R, pose_theta)
+    pose_y += get_delta_y_I(delta_x_R, delta_y_R, pose_theta)
+    
+    print("Current pose: [%5f, %5f, %5f]" % (pose_x, pose_y, pose_theta))
+    
+    

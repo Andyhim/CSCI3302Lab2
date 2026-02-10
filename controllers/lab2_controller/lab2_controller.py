@@ -37,6 +37,7 @@ robot = Robot()
 EPUCK_AXLE_DIAMETER = 0.053  # ePuck's wheels are 53mm apart.
 # TODO: set the ePuck wheel speed in m/s after measuring the speed (Part 1)
 EPUCK_MAX_WHEEL_SPEED = 0
+WHEEL_RADIUS = 0 # Will calculate wheel radius later using wheel speed
 MAX_SPEED = 6.28
 
 # get the time step of the current world.
@@ -75,7 +76,7 @@ state = State.SPEED_MEASUREMENT
 start_time = 0
 end_time = 0
 
-START_Z = -0.33
+START_Z = -0.06
 LINE_Z = 0.1827
 
 START_LINE_DETECTION_DURATION = 0.2
@@ -123,6 +124,8 @@ while robot.step(SIM_TIMESTEP) != -1:
             end_time = robot.getTime()
             
             EPUCK_MAX_WHEEL_SPEED = (LINE_Z - START_Z) / (end_time - start_time)
+            WHEEL_RADIUS = EPUCK_MAX_WHEEL_SPEED / MAX_SPEED
+            print(WHEEL_RADIUS)
             print(EPUCK_MAX_WHEEL_SPEED)
             
             state = State.LINE_FOLLOWER

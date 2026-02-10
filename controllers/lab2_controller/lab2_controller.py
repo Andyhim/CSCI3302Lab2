@@ -1,0 +1,229 @@
+"""csci3302_lab2 controller."""
+
+# You may need to import some classes of the controller module.
+import math
+from enum import Enum
+from controller import Robot, Motor, DistanceSensor
+# import os
+
+class State(Enum):
+    SPEED_MEASUREMENT = 0
+    LINE_FOLLOWER = 1
+
+# Ground Sensor Measurements under this threshold are black
+# measurements above this threshold can be considered white.
+# TODO: Set a reasonable threshold that separates "line detected" from "no line detected"
+GROUND_SENSOR_THRESHOLD = 450
+SENSOR_MAX = 850 # Typical sensor maximum (by observation)
+SENSOR_RANGE = SENSOR_MAX - GROUND_SENSOR_THRESHOLD
+START_LINE_SENSOR_OFFSET = 50
+LOST_SENSOR_THRESHOLD = 750
+GSR_FILTER = 0.4
+
+# These are your pose values that you will update by solving the odometry equations
+pose_x = 0
+pose_y = 0
+pose_theta = 0
+
+# Index into ground_sensors and ground_sensor_readings for each of the 3 onboard sensors.
+LEFT_IDX = 0
+CENTER_IDX = 1
+RIGHT_IDX = 2
+
+# create the Robot instance.
+robot = Robot()
+
+# ePuck Constants
+EPUCK_AXLE_DIAMETER = 0.053  # ePuck's wheels are 53mm apart.
+# TODO: set the ePuck wheel speed in m/s after measuring the speed (Part 1)
+EPUCK_MAX_WHEEL_SPEED = 0
+MAX_SPEED = 6.28
+
+# get the time step of the current world.
+SIM_TIMESTEP = int(robot.getBasicTimeStep())
+
+# Initialize Motors
+leftMotor = robot.getDevice('left wheel motor')
+rightMotor = robot.getDevice('right wheel motor')
+leftMotor.setPosition(float('inf'))
+rightMotor.setPosition(float('inf'))
+leftMotor.setVelocity(0.0)
+rightMotor.setVelocity(0.0)
+
+# Initialize and Enable the Ground Sensors
+gsr_raw = [0, 0, 0]
+gsr = [1000, 1000, 1000]
+ground_sensors = [robot.getDevice('gs0'), robot.getDevice(
+    'gs1'), robot.getDevice('gs2')]
+for gs in ground_sensors:
+    gs.enable(SIM_TIMESTEP)
+
+# Allow sensors to properly initialize
+for i in range(10):
+    robot.step(SIM_TIMESTEP)
+
+# Initialize variable for left and right speed
+vL = 0
+vR = 0
+last_vL = vL
+last_vR = vR
+
+# Initialize robot state
+state = State.SPEED_MEASUREMENT
+
+# Use to track time until start line
+start_time = 0
+end_time = 0
+
+START_Z = -0.33
+LINE_Z = 0.1827
+
+START_LINE_DETECTION_DURATION = 0.2
+start_line_detection_time = 0
+checking_start_line = False
+
+
+def calculate_vel(sensor):
+    clamped_reading = sensor
+    if sensor > SENSOR_MAX:
+        clamped_reading = SENSOR_MAX
+    elif sensor < GROUND_SENSOR_THRESHOLD:
+        clamped_reading = GROUND_SENSOR_THRESHOLD
+        
+    return (1 - (clamped_reading - GROUND_SENSOR_THRESHOLD) / SENSOR_RANGE) * MAX_SPEED
+
+
+# Main Control Loop:
+while robot.step(SIM_TIMESTEP) != -1:
+    vL = last_vL
+    vR = last_vR
+
+    # Read ground sensor values
+    for i, gs in enumerate(ground_sensors):
+        gsr_raw[i] = gs.getValue()
+        gsr[i] = gsr[i] * GSR_FILTER + gsr_raw[i] * (1 - GSR_FILTER) 
+
+    # TODO: Uncomment to see the ground sensor values!
+    # TODO: But when you don't need it, please comment it so you have a clean terminal.
+    # print(gsr)
+
+    # Part 1
+    # TODO: Implement Maximum Speed Measurement under state "speed_measurement"
+    # TODO: Save the speed within XZ-plane to EPUCK_MAX_WHEEL_SPEED after measuring it.
+    if state == State.SPEED_MEASUREMENT:
+        vL = MAX_SPEED
+        vR = MAX_SPEED
+        if start_time == 0:
+            start_time = robot.getTime()
+        
+        # Check if at start line
+        if (gsr_raw[LEFT_IDX] < GROUND_SENSOR_THRESHOLD
+            and gsr_raw[CENTER_IDX] < GROUND_SENSOR_THRESHOLD
+            and gsr_raw[CENTER_IDX] < GROUND_SENSOR_THRESHOLD):
+            end_time = robot.getTime()
+            
+            EPUCK_MAX_WHEEL_SPEED = (LINE_Z - START_Z) / (end_time - start_time)
+            print(EPUCK_MAX_WHEEL_SPEED)
+            
+            state = State.LINE_FOLLOWER
+
+    # Part 2
+    # TODO: Implement Line Following under state "line_follower"
+    # TODO: Also implement update_odometry and then call update_odometry here
+    # Hints for Line Following:
+    #
+    # 1) Setting vL=MAX_SPEED and vR=-MAX_SPEED lets the robot turn
+    # right on the spot. vL=MAX_SPEED and vR=0.5*MAX_SPEED lets the
+    # robot drive a right curve.
+    #
+    # 2) If your robot "overshoots", turn slower.
+    #
+    # 3) Only set the wheel speeds once so that you can use the speed
+    # that you calculated in your odometry calculation.
+    #
+    # 4) Disable all console output to simulate the robot superfast
+    # and test the robustness of your approach.
+    #
+    # Hints for update_odometry:
+    #
+    # 1) Divide vL/vR by MAX_SPEED to normalize, then multiply with
+    # the robot's maximum speed in meters per second.
+    #
+    # 2) SIM_TIMESTEP tells you the elapsed time per step. You need
+    # to divide by 1000.0 to convert it to seconds
+    #
+    # 3) Do simple sanity checks. In the beginning, only one value
+    # changes. Once you do a right turn, this value should be constant.
+    #
+    # 4) Focus on getting things generally right first, then worry
+    # about calculating odometry in the world coordinate system of the
+    # Webots simulator first (x points down, y points right)
+    elif state == State.LINE_FOLLOWER: 
+        
+        
+
+    # Part 3
+    # TODO: Implement Loop Closure also under state "line_follower" to reset pose when robot passes over the Start Line.
+    # Hints:
+    #
+    # 1) Set a flag whenever you encounter the line
+    #
+    # 2) Use the pose when you encounter the line last
+    # for best results
+    
+        if gsr[CENTER_IDX] < GROUND_SENSOR_THRESHOLD: # If center sensor sees line
+            if (gsr[LEFT_IDX] < (GROUND_SENSOR_THRESHOLD - START_LINE_SENSOR_OFFSET)
+                and gsr[CENTER_IDX] < (GROUND_SENSOR_THRESHOLD - START_LINE_SENSOR_OFFSET)
+                and gsr[CENTER_IDX] < (GROUND_SENSOR_THRESHOLD - START_LINE_SENSOR_OFFSET)): # Do all sensors see the line?
+                # print("booyah")
+                
+                if not checking_start_line: # If not already, let's turn on the line detection timer
+                    checking_start_line = True
+                    start_line_detection_time = robot.getTime()
+                    
+                if checking_start_line: # If the line detetion timer is on, let's check if it has been on for full duration needed
+                    if robot.getTime() - START_LINE_DETECTION_DURATION > start_line_detection_time:
+                        print("Start line detected!")
+                        pose_x, pose_y, pose_theta = 0, 0, 0
+                        checking_start_line = False
+            else:
+                checking_start_line = False # If all three sensors aren't on, turn off line detection timer
+                        
+                if gsr[LEFT_IDX] < GROUND_SENSOR_THRESHOLD: # Center and left see line
+                    vL = calculate_vel(gsr[RIGHT_IDX])
+                    vR = MAX_SPEED - (1 - (vL / MAX_SPEED) / 2)
+                if gsr[RIGHT_IDX] < GROUND_SENSOR_THRESHOLD: # Center and right see line
+                    vR = calculate_vel(gsr[LEFT_IDX])
+                    vL = MAX_SPEED - (1 - (vR / MAX_SPEED) / 2)  
+                else: # Only center sees line
+                    vL = MAX_SPEED
+                    vR = MAX_SPEED
+    
+        elif (gsr[LEFT_IDX] > LOST_SENSOR_THRESHOLD
+            and gsr[CENTER_IDX] > LOST_SENSOR_THRESHOLD
+            and gsr[CENTER_IDX] > LOST_SENSOR_THRESHOLD): # Are we lost? Then rotate in the last direction until we find the line
+            
+            if last_vL > last_vR:
+                vL = MAX_SPEED * 0.7
+                vR = -MAX_SPEED * 0.3
+            else:
+                vL = -MAX_SPEED * 0.3
+                vR = MAX_SPEED * 0.7
+            # print("booyah")
+            # print(gsr)
+            
+        else: # Center doesn't see line, but left or right do
+            if gsr[LEFT_IDX] < LOST_SENSOR_THRESHOLD: # Left sees line
+                vL = MAX_SPEED * 0
+                vR = MAX_SPEED * 0.7
+            elif gsr[RIGHT_IDX] < LOST_SENSOR_THRESHOLD: # Right sees line
+                vR = MAX_SPEED * 0
+                vL = MAX_SPEED * 0.7
+               
+
+    # print("Current pose: [%5f, %5f, %5f]" % (pose_x, pose_y, pose_theta))
+    leftMotor.setVelocity((last_vL * 0.6) + (vL * 0.4))
+    rightMotor.setVelocity((last_vR * 0.6) + (vR * 0.4))
+    last_vL = vL if vL != last_vL else last_vL
+    last_vR = vR if vR != last_vR else last_vR
+    # print(vL, vR)

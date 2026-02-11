@@ -37,8 +37,12 @@ robot = Robot()
 EPUCK_AXLE_DIAMETER = 0.053  # ePuck's wheels are 53mm apart.
 # TODO: set the ePuck wheel speed in m/s after measuring the speed (Part 1)
 EPUCK_MAX_WHEEL_SPEED = 0
-WHEEL_RADIUS = 0 # Will calculate wheel radius later using wheel speed
+# WHEEL_RADIUS = 0 # Will calculate wheel radius later using wheel speed
 MAX_SPEED = 6.28
+# Meters per radian will be calculated later based on speed
+M_PER_R = 0
+# Caps speed when line following for better odometry accuracy (Lower = higher accuracy)
+LINE_FOLLOW_SPEED_MULT = 0.7
 
 # get the time step of the current world.
 SIM_TIMESTEP = int(robot.getBasicTimeStep())
@@ -50,6 +54,13 @@ leftMotor.setPosition(float('inf'))
 rightMotor.setPosition(float('inf'))
 leftMotor.setVelocity(0.0)
 rightMotor.setVelocity(0.0)
+
+# Enable position sensors (inspired by OpenAI ChatGPT LLM)
+left_PS = leftMotor.getPositionSensor()
+right_PS = rightMotor.getPositionSensor()
+
+left_PS.enable(SIM_TIMESTEP)
+right_PS.enable(SIM_TIMESTEP)
 
 # Initialize and Enable the Ground Sensors
 gsr_raw = [0, 0, 0]
@@ -68,6 +79,8 @@ vL = 0
 vR = 0
 last_vL = vL
 last_vR = vR
+last_left_enc = 0
+last_right_enc = 0
 
 # Initialize robot state
 state = State.SPEED_MEASUREMENT
@@ -76,13 +89,15 @@ state = State.SPEED_MEASUREMENT
 start_time = 0
 end_time = 0
 
-START_Z = -0.06
+START_Z = -0.33
 LINE_Z = 0.1827
 
 START_LINE_DETECTION_DURATION = 0.2
 start_line_detection_time = 0
 checking_start_line = False
 
+last_left_enc = left_PS.getValue()
+last_right_enc = right_PS.getValue()
 
 def calculate_vel(sensor):
     clamped_reading = sensor
@@ -93,14 +108,11 @@ def calculate_vel(sensor):
         
     return (1 - (clamped_reading - GROUND_SENSOR_THRESHOLD) / SENSOR_RANGE) * MAX_SPEED
 
-def get_delta_theta(current_phi_L, current_phi_R):
-    return (current_phi_R * WHEEL_RADIUS / EPUCK_AXLE_DIAMETER) - (current_phi_L * WHEEL_RADIUS / EPUCK_AXLE_DIAMETER)
+def get_delta_theta(current_delta_L, current_delta_R):
+    return (current_delta_R - current_delta_L) / EPUCK_AXLE_DIAMETER
     
-def get_delta_phi(current_phi):
-    return current_phi / SIM_TIMESTEP
-    
-def get_delta_x_R(current_phi_L, current_phi_R):
-    return (WHEEL_RADIUS * current_phi_L / 2) + (WHEEL_RADIUS * current_phi_R / 2)
+def get_delta_x_R(delta_L, delta_R):
+    return (delta_L / 2) + (delta_R / 2)
     
 def get_delta_y_R():
     return 0
@@ -113,6 +125,19 @@ def get_delta_y_I(current_delta_x_R, current_delta_y_R, theta):
 
 # Main Control Loop:
 while robot.step(SIM_TIMESTEP) != -1:
+    smoothed_vL = (last_vL * 0.6) + (vL * 0.4)
+    smoothed_vR = (last_vR * 0.6) + (vR * 0.4)
+    if state == State.SPEED_MEASUREMENT:
+        leftMotor.setVelocity(smoothed_vL)
+        rightMotor.setVelocity(smoothed_vR)
+    else:
+        leftMotor.setVelocity(smoothed_vL * LINE_FOLLOW_SPEED_MULT)
+        rightMotor.setVelocity(smoothed_vR * LINE_FOLLOW_SPEED_MULT)
+    
+    last_vL = smoothed_vL if smoothed_vL != last_vL else last_vL
+    last_vR = smoothed_vR if smoothed_vR != last_vR else last_vR
+    # print(vL, vR)
+
     vL = last_vL
     vR = last_vR
 
@@ -137,15 +162,15 @@ while robot.step(SIM_TIMESTEP) != -1:
         # Check if at start line
         if (gsr_raw[LEFT_IDX] < GROUND_SENSOR_THRESHOLD
             and gsr_raw[CENTER_IDX] < GROUND_SENSOR_THRESHOLD
-            and gsr_raw[CENTER_IDX] < GROUND_SENSOR_THRESHOLD):
+            and gsr_raw[RIGHT_IDX] < GROUND_SENSOR_THRESHOLD):
             end_time = robot.getTime()
             
             EPUCK_MAX_WHEEL_SPEED = (LINE_Z - START_Z) / (end_time - start_time)
-            WHEEL_RADIUS = EPUCK_MAX_WHEEL_SPEED / MAX_SPEED
-            print(WHEEL_RADIUS)
-            print(EPUCK_MAX_WHEEL_SPEED)
+            M_PER_R = EPUCK_MAX_WHEEL_SPEED / MAX_SPEED
+            print(f"E-puck speed: {EPUCK_MAX_WHEEL_SPEED}")
             
             state = State.LINE_FOLLOWER
+            continue
 
     # Part 2
     # TODO: Implement Line Following under state "line_follower"
@@ -194,7 +219,7 @@ while robot.step(SIM_TIMESTEP) != -1:
         if gsr[CENTER_IDX] < GROUND_SENSOR_THRESHOLD: # If center sensor sees line
             if (gsr[LEFT_IDX] < (GROUND_SENSOR_THRESHOLD - START_LINE_SENSOR_OFFSET)
                 and gsr[CENTER_IDX] < (GROUND_SENSOR_THRESHOLD - START_LINE_SENSOR_OFFSET)
-                and gsr[CENTER_IDX] < (GROUND_SENSOR_THRESHOLD - START_LINE_SENSOR_OFFSET)): # Do all sensors see the line?
+                and gsr[RIGHT_IDX] < (GROUND_SENSOR_THRESHOLD - START_LINE_SENSOR_OFFSET)): # Do all sensors see the line?
                 # print("booyah")
                 
                 if not checking_start_line: # If not already, let's turn on the line detection timer
@@ -203,8 +228,8 @@ while robot.step(SIM_TIMESTEP) != -1:
                     
                 if checking_start_line: # If the line detetion timer is on, let's check if it has been on for full duration needed
                     if robot.getTime() - START_LINE_DETECTION_DURATION > start_line_detection_time:
-                        print("Start line detected!")
-                        # pose_x, pose_y, pose_theta = 0, 0, 0
+                        # print("Start line detected!")
+                        pose_x, pose_y, pose_theta = 0, 0, 0
                         checking_start_line = False
             else:
                 checking_start_line = False # If all three sensors aren't on, turn off line detection timer
@@ -221,7 +246,7 @@ while robot.step(SIM_TIMESTEP) != -1:
     
         elif (gsr[LEFT_IDX] > LOST_SENSOR_THRESHOLD
             and gsr[CENTER_IDX] > LOST_SENSOR_THRESHOLD
-            and gsr[CENTER_IDX] > LOST_SENSOR_THRESHOLD): # Are we lost? Then rotate in the last direction until we find the line
+            and gsr[RIGHT_IDX] > LOST_SENSOR_THRESHOLD): # Are we lost? Then rotate in the last direction until we find the line
             
             if last_vL > last_vR:
                 vL = MAX_SPEED * 0.7
@@ -239,26 +264,39 @@ while robot.step(SIM_TIMESTEP) != -1:
             elif gsr[RIGHT_IDX] < LOST_SENSOR_THRESHOLD: # Right sees line
                 vR = MAX_SPEED * 0
                 vL = MAX_SPEED * 0.7
-               
+                
+                
+        # Spin (debug only) COMMENT OUT LINE FOLLOWING LOGIC BEFORE USING
+        # vL = 0.3 * MAX_SPEED
+        # vR = 0.3 * -MAX_SPEED
 
     
-    leftMotor.setVelocity((last_vL * 0.6) + (vL * 0.4))
-    rightMotor.setVelocity((last_vR * 0.6) + (vR * 0.4))
-    last_vL = vL if vL != last_vL else last_vL
-    last_vR = vR if vR != last_vR else last_vR
-    # print(vL, vR)
     
-    phi_L = get_delta_phi(vL)
-    phi_R = get_delta_phi(vR)
+    current_left_enc = left_PS.getValue()
+    current_right_enc = right_PS.getValue()
+
+    delta_phi_L = current_left_enc - last_left_enc
+    delta_phi_R = current_right_enc - last_right_enc
     
-    pose_theta += get_delta_theta(phi_L, phi_R)
+    last_left_enc = current_left_enc
+    last_right_enc = current_right_enc
     
-    delta_x_R = get_delta_x_R(phi_L, phi_R)
+    delta_L = delta_phi_L * M_PER_R
+    delta_R = delta_phi_R * M_PER_R
+    
+    delta_theta = get_delta_theta(delta_L, delta_R)
+    delta_x_R = get_delta_x_R(delta_L, delta_R) 
     delta_y_R = get_delta_y_R()
+    # "Midpoint orientation" inspired by Anthropic's Claude LLM
+    mid_theta = pose_theta + delta_theta / 2
     
-    pose_x += get_delta_x_I(delta_x_R, delta_y_R, pose_theta)
-    pose_y += get_delta_y_I(delta_x_R, delta_y_R, pose_theta)
+    pose_x += get_delta_x_I(delta_x_R, delta_y_R, mid_theta)
+    pose_y += get_delta_y_I(delta_x_R, delta_y_R, mid_theta)
     
-    print("Current pose: [%5f, %5f, %5f]" % (pose_x, pose_y, pose_theta))
+    pose_theta += delta_theta
+    
+    print("Current pose: [%5f, %5f, %5f]" % (pose_x, pose_y, pose_theta)) 
+    
+    
     
     
